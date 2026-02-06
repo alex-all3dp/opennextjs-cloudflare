@@ -24,6 +24,11 @@
 			"types": "./dist/api/index.d.ts",
 			"default": "./dist/api/index.js"
 		},
+		"./do-proxy": {
+			"import": "./dist/api/do-proxy/index.js",
+			"types": "./dist/api/do-proxy/index.d.ts",
+			"default": "./dist/api/do-proxy/index.js"
+		},
 		"./*": {
 			"import": "./dist/api/*.js",
 			"types": "./dist/api/*.d.ts",
