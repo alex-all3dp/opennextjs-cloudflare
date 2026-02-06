@@ -58,39 +58,39 @@
 	"homepage": "https://github.com/opennextjs/opennextjs-cloudflare",
 	"dependencies": {
 		"@ast-grep/napi": "^0.40.5",
-		"@dotenvx/dotenvx": "catalog:",
+		"@dotenvx/dotenvx": "1.31.0",
 		"@opennextjs/aws": "3.9.15",
 		"cloudflare": "^4.4.1",
 		"enquirer": "^2.4.1",
-		"glob": "catalog:",
+		"glob": "^12.0.0",
 		"ts-tqdm": "^0.8.6",
-		"yargs": "catalog:"
+		"yargs": "^18.0.0"
 	},
 	"devDependencies": {
-		"@cloudflare/workers-types": "catalog:",
-		"@eslint/js": "catalog:",
-		"@tsconfig/strictest": "catalog:",
-		"@types/mock-fs": "catalog:",
-		"@types/node": "catalog:",
+		"@cloudflare/workers-types": "^4.20260114.0",
+		"@eslint/js": "^9.11.1",
+		"@tsconfig/strictest": "^2.0.5",
+		"@types/mock-fs": "^4.13.4",
+		"@types/node": "^22.2.0",
 		"@types/picomatch": "^4.0.0",
-		"@types/yargs": "catalog:",
+		"@types/yargs": "^17.0.33",
 		"diff": "^8.0.2",
-		"esbuild": "catalog:",
-		"eslint": "catalog:",
-		"eslint-plugin-import": "catalog:",
-		"eslint-plugin-simple-import-sort": "catalog:",
-		"eslint-plugin-unicorn": "catalog:",
-		"globals": "catalog:",
-		"mock-fs": "catalog:",
-		"next": "catalog:",
+		"esbuild": "^0.27.0",
+		"eslint": "^9.31.0",
+		"eslint-plugin-import": "^2.31.0",
+		"eslint-plugin-simple-import-sort": "^12.1.1",
+		"eslint-plugin-unicorn": "^55.0.0",
+		"globals": "^15.9.0",
+		"mock-fs": "^5.4.1",
+		"next": "~15.5.9",
 		"picomatch": "^4.0.2",
-		"rimraf": "catalog:",
-		"typescript": "catalog:",
-		"typescript-eslint": "catalog:",
-		"vitest": "catalog:"
+		"rimraf": "^6.0.1",
+		"typescript": "^5.9.3",
+		"typescript-eslint": "^8.48.0",
+		"vitest": "^2.1.1"
 	},
 	"peerDependencies": {
-		"wrangler": "catalog:",
-		"next": "~15.0.8 || ~15.1.12 || ~15.2.9 || ~15.3.9 || ~15.4.11 || ~15.5.10 || ~16.0.11 || ^16.1.5"
+		"wrangler": "^4.59.2",
+		"next": "~15.0.8 || ~15.1.12 || ~15.2.9 || ~15.3.9 || ~15.4.11 || ~15.5.9 || ~16.0.11 || ^16.1.5"
 	}
 }
