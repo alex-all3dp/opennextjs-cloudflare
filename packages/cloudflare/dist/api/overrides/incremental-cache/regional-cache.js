@@ -1,0 +1,171 @@
+import { error } from "@opennextjs/aws/adapters/logger.js";
+import { getCloudflareContext } from "../../cloudflare-context.js";
+import { debugCache, FALLBACK_BUILD_ID, isPurgeCacheEnabled } from "../internal.js";
+const ONE_MINUTE_IN_SECONDS = 60;
+const THIRTY_MINUTES_IN_SECONDS = ONE_MINUTE_IN_SECONDS * 30;
+/**
+ * Wrapper adding a regional cache on an `IncrementalCache` implementation.
+ *
+ * Using a the `RegionalCache` does not directly improves the performance much.
+ * However it allows bypassing the tag cache (see `bypassTagCacheOnCacheHit`) on hits.
+ * That's where bigger perf gain happens.
+ *
+ * We recommend using cache purge.
+ * When cache purge is not enabled, there is a possibility that the Cache API (local to a Data Center)
+ * is out of sync with the cache store (i.e. R2). That's why when cache purge is not enabled the Cache
+ * API is refreshed from the cache store on cache hits (for the long-lived mode).
+ */
+class RegionalCache {
+    store;
+    opts;
+    name;
+    localCache;
+    constructor(store, opts) {
+        this.store = store;
+        this.opts = opts;
+        this.name = this.store.name;
+        // `shouldLazilyUpdateOnCacheHit` is not needed when cache purge is enabled.
+        this.opts.shouldLazilyUpdateOnCacheHit ??= this.opts.mode === "long-lived" && !isPurgeCacheEnabled();
+    }
+    get #bypassTagCacheOnCacheHit() {
+        if (this.opts.bypassTagCacheOnCacheHit !== undefined) {
+            return this.opts.bypassTagCacheOnCacheHit;
+        }
+        // When `bypassTagCacheOnCacheHit` is not set, we default to whether the automatic cache purging is enabled or not
+        return isPurgeCacheEnabled();
+    }
+    async get(key, cacheType) {
+        try {
+            const cache = await this.getCacheInstance();
+            const urlKey = this.getCacheUrlKey(key, cacheType);
+            // Check for a cached entry as this will be faster than the store response.
+            const cachedResponse = await cache.match(urlKey);
+            if (cachedResponse) {
+                debugCache("RegionalCache", `get ${key} -> cached response`);
+                // Re-fetch from the store and update the regional cache in the background.
+                // Note: this is only useful when the Cache API is not purged automatically.
+                if (this.opts.shouldLazilyUpdateOnCacheHit) {
+                    getCloudflareContext().ctx.waitUntil(this.store.get(key, cacheType).then(async (rawEntry) => {
+                        const { value, lastModified } = rawEntry ?? {};
+                        if (value && typeof lastModified === "number") {
+                            await this.putToCache({ key, cacheType, entry: { value, lastModified } });
+                        }
+                    }));
+                }
+                const responseJson = await cachedResponse.json();
+                return {
+                    ...responseJson,
+                    shouldBypassTagCache: this.#bypassTagCacheOnCacheHit,
+                };
+            }
+            const rawEntry = await this.store.get(key, cacheType);
+            const { value, lastModified } = rawEntry ?? {};
+            if (!value || typeof lastModified !== "number")
+                return null;
+            debugCache("RegionalCache", `get ${key} -> put to cache`);
+            // Update the locale cache after retrieving from the store.
+            getCloudflareContext().ctx.waitUntil(this.putToCache({ key, cacheType, entry: { value, lastModified } }));
+            return { value, lastModified };
+        }
+        catch (e) {
+            error("Failed to get from regional cache", e);
+            return null;
+        }
+    }
+    async set(key, value, cacheType) {
+        try {
+            debugCache("RegionalCache", `set ${key}`);
+            await this.store.set(key, value, cacheType);
+            await this.putToCache({
+                key,
+                cacheType,
+                entry: {
+                    value,
+                    // Note: `Date.now()` returns the time of the last IO rather than the actual time.
+                    //       See https://developers.cloudflare.com/workers/reference/security-model/
+                    lastModified: Date.now(),
+                },
+            });
+        }
+        catch (e) {
+            error(`Failed to set the regional cache`, e);
+        }
+    }
+    async delete(key) {
+        debugCache("RegionalCache", `delete ${key}`);
+        try {
+            await this.store.delete(key);
+            const cache = await this.getCacheInstance();
+            await cache.delete(this.getCacheUrlKey(key));
+        }
+        catch (e) {
+            error("Failed to delete from regional cache", e);
+        }
+    }
+    async getCacheInstance() {
+        if (this.localCache)
+            return this.localCache;
+        this.localCache = await caches.open("incremental-cache");
+        return this.localCache;
+    }
+    getCacheUrlKey(key, cacheType) {
+        const buildId = process.env.NEXT_BUILD_ID ?? FALLBACK_BUILD_ID;
+        return "http://cache.local" + `/${buildId}/${key}`.replace(/\/+/g, "/") + `.${cacheType ?? "cache"}`;
+    }
+    async putToCache({ key, cacheType, entry }) {
+        const urlKey = this.getCacheUrlKey(key, cacheType);
+        const cache = await this.getCacheInstance();
+        const age = this.opts.mode === "short-lived"
+            ? ONE_MINUTE_IN_SECONDS
+            : entry.value.revalidate || this.opts.defaultLongLivedTtlSec || THIRTY_MINUTES_IN_SECONDS;
+        // We default to the entry key if no tags are found.
+        // so that we can also revalidate page router based entry this way.
+        const tags = getTagsFromCacheEntry(entry) ?? [key];
+        await cache.put(urlKey, new Response(JSON.stringify(entry), {
+            headers: new Headers({
+                "cache-control": `max-age=${age}`,
+                ...(tags.length > 0
+                    ? {
+                        "cache-tag": tags.join(","),
+                    }
+                    : {}),
+            }),
+        }));
+    }
+}
+/**
+ * A regional cache will wrap an incremental cache and provide faster cache lookups for an entry
+ * when making requests within the region.
+ *
+ * The regional cache uses the Cache API.
+ *
+ * **WARNING:**
+ * If an entry is revalidated on demand in one region (using either `revalidateTag`, `revalidatePath` or `res.revalidate` ), it will trigger an additional revalidation if
+ * a request is made to another region that has an entry stored in its regional cache.
+ *
+ * @param cache Incremental cache instance.
+ * @param opts Options for the regional cache.
+ */
+export function withRegionalCache(cache, opts) {
+    return new RegionalCache(cache, opts);
+}
+/**
+ * Extract the list of tags from a cache entry.
+ */
+function getTagsFromCacheEntry(entry) {
+    if ("tags" in entry.value && entry.value.tags) {
+        return entry.value.tags;
+    }
+    if ("meta" in entry.value &&
+        entry.value.meta &&
+        "headers" in entry.value.meta &&
+        entry.value.meta.headers) {
+        const rawTags = entry.value.meta.headers["x-next-cache-tags"];
+        if (typeof rawTags === "string") {
+            return rawTags.split(",");
+        }
+    }
+    if ("value" in entry.value) {
+        return entry.value.tags;
+    }
+}
