@@ -5,11 +5,17 @@
  * This enables the main worker to use DOs without having `durable_objects`
  * in its wrangler config, which is required for preview URLs (skew protection).
  */
-const DO_RPC_PREFIX = "/do-rpc";
+import { DO_RPC_PREFIX, NAMESPACE_BINDINGS } from "./constants.js";
+/**
+ * Properties that should NOT be intercepted by the proxy stub.
+ * Accessing these must return `undefined` to avoid spurious RPC calls,
+ * e.g. when the stub is accidentally `await`ed (which checks `.then`).
+ */
+const NON_RPC_PROPERTIES = new Set(["then", "toJSON", "valueOf", "toString", "constructor"]);
 /**
  * A proxy DurableObjectId that carries the name used to create it.
  */
-class ProxyDurableObjectId {
+export class ProxyDurableObjectId {
     name;
     constructor(name) {
         this.name = name;
@@ -29,8 +35,11 @@ function createProxyStub(service, namespaceName, doIdName, locationHint) {
     // Use a Proxy to intercept any method call on the stub
     return new Proxy({}, {
         get(_target, method) {
-            // Skip internal/symbol properties
+            // Skip symbol properties
             if (typeof method === "symbol")
+                return undefined;
+            // Skip known non-RPC properties to prevent spurious calls
+            if (NON_RPC_PROPERTIES.has(method))
                 return undefined;
             // Return the id
             if (method === "id")
@@ -79,8 +88,10 @@ export function createProxyDurableObjectNamespace(service, namespaceName) {
             return new ProxyDurableObjectId(name);
         },
         get(id, options) {
-            const proxyId = id;
-            return createProxyStub(service, namespaceName, proxyId.name, options?.locationHint);
+            if (!(id instanceof ProxyDurableObjectId)) {
+                throw new Error("DO proxy: get() received a non-proxy DurableObjectId. Use idFromName() from this namespace.");
+            }
+            return createProxyStub(service, namespaceName, id.name, options?.locationHint);
         },
         // Jurisdiction is not commonly used, but provide a basic implementation
         jurisdiction(_jurisdiction) {
@@ -102,14 +113,9 @@ export function injectDOProxyBindings(env) {
     const doWorkerService = env["OPENNEXT_DO_WORKER"];
     if (!doWorkerService)
         return;
-    const bindings = [
-        { key: "NEXT_TAG_CACHE_DO_SHARDED", name: "NEXT_TAG_CACHE_DO_SHARDED" },
-        { key: "NEXT_CACHE_DO_QUEUE", name: "NEXT_CACHE_DO_QUEUE" },
-        { key: "NEXT_CACHE_DO_PURGE", name: "NEXT_CACHE_DO_PURGE" },
-    ];
-    for (const { key, name } of bindings) {
-        if (!env[key]) {
-            env[key] = createProxyDurableObjectNamespace(doWorkerService, name);
+    for (const name of NAMESPACE_BINDINGS) {
+        if (!env[name]) {
+            env[name] = createProxyDurableObjectNamespace(doWorkerService, name);
         }
     }
 }

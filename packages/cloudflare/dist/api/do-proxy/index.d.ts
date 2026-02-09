@@ -1,4 +1,4 @@
-export { createProxyDurableObjectNamespace, injectDOProxyBindings } from "./proxy-namespace.js";
+export { createProxyDurableObjectNamespace, injectDOProxyBindings, ProxyDurableObjectId } from "./proxy-namespace.js";
 export { createDOProxyHandler } from "./proxy-handler.js";
 /**
  * Wraps an ExportedHandler to inject DO proxy namespaces into env

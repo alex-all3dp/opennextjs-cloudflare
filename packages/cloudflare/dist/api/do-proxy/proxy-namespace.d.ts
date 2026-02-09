@@ -6,6 +6,15 @@
  * in its wrangler config, which is required for preview URLs (skew protection).
  */
 /**
+ * A proxy DurableObjectId that carries the name used to create it.
+ */
+export declare class ProxyDurableObjectId {
+    readonly name: string;
+    constructor(name: string);
+    toString(): string;
+    equals(other: DurableObjectId): boolean;
+}
+/**
  * Creates a proxy DurableObjectNamespace that routes all DO operations
  * through a service binding to an external DO worker.
  *

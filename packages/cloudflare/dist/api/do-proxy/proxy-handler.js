@@ -11,16 +11,7 @@
  * export default createDOProxyHandler();
  * ```
  */
-const DO_RPC_PREFIX = "/do-rpc";
-/**
- * Map of binding names to the DurableObjectNamespace keys in CloudflareEnv.
- * The proxy handler uses these to look up the correct namespace.
- */
-const NAMESPACE_BINDINGS = [
-    "NEXT_TAG_CACHE_DO_SHARDED",
-    "NEXT_CACHE_DO_QUEUE",
-    "NEXT_CACHE_DO_PURGE",
-];
+import { DO_RPC_PREFIX, NAMESPACE_BINDINGS } from "./constants.js";
 /**
  * Creates a fetch handler that routes DO proxy RPC requests to local DO stubs.
  *
@@ -75,7 +66,12 @@ export function createDOProxyHandler() {
                 // Parse arguments
                 const args = (await request.json());
                 // Call the method on the stub
-                const result = await stub[method](...args);
+                // biome-ignore lint: dynamic dispatch is intentional for RPC proxy
+                const fn = stub[method];
+                if (typeof fn !== "function") {
+                    return new Response(`Method ${method} not found on DO stub`, { status: 404 });
+                }
+                const result = await fn(...args);
                 // Return the result
                 if (result === undefined || result === null) {
                     return new Response(null, { status: 204 });

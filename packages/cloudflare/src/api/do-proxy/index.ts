@@ -1,7 +1,7 @@
 import { injectDOProxyBindings } from "./proxy-namespace.js";
 
-export { createProxyDurableObjectNamespace, injectDOProxyBindings } from "./proxy-namespace.js";
 export { createDOProxyHandler } from "./proxy-handler.js";
+export { createProxyDurableObjectNamespace, injectDOProxyBindings, ProxyDurableObjectId } from "./proxy-namespace.js";
 
 /**
  * Wraps an ExportedHandler to inject DO proxy namespaces into env
@@ -18,7 +18,10 @@ export { createDOProxyHandler } from "./proxy-handler.js";
 export function withDOProxy(
 	handler: ExportedHandler<CloudflareEnv>
 ): ExportedHandler<CloudflareEnv> {
-	const originalFetch = handler.fetch!;
+	const originalFetch = handler.fetch;
+	if (!originalFetch) {
+		throw new Error("withDOProxy: handler must define a fetch method");
+	}
 	return {
 		...handler,
 		fetch(request, env, ctx) {

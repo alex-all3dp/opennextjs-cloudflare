@@ -6,12 +6,19 @@
  * in its wrangler config, which is required for preview URLs (skew protection).
  */
 
-const DO_RPC_PREFIX = "/do-rpc";
+import { DO_RPC_PREFIX, NAMESPACE_BINDINGS } from "./constants.js";
+
+/**
+ * Properties that should NOT be intercepted by the proxy stub.
+ * Accessing these must return `undefined` to avoid spurious RPC calls,
+ * e.g. when the stub is accidentally `await`ed (which checks `.then`).
+ */
+const NON_RPC_PROPERTIES = new Set(["then", "toJSON", "valueOf", "toString", "constructor"]);
 
 /**
  * A proxy DurableObjectId that carries the name used to create it.
  */
-class ProxyDurableObjectId {
+export class ProxyDurableObjectId {
 	readonly name: string;
 
 	constructor(name: string) {
@@ -39,9 +46,11 @@ function createProxyStub(
 ): DurableObjectStub {
 	// Use a Proxy to intercept any method call on the stub
 	return new Proxy({} as DurableObjectStub, {
-		get(_target, method: string) {
-			// Skip internal/symbol properties
+		get(_target, method: string | symbol) {
+			// Skip symbol properties
 			if (typeof method === "symbol") return undefined;
+			// Skip known non-RPC properties to prevent spurious calls
+			if (NON_RPC_PROPERTIES.has(method)) return undefined;
 			// Return the id
 			if (method === "id") return new ProxyDurableObjectId(doIdName);
 			// Return the name
@@ -102,21 +111,20 @@ export function createProxyDurableObjectNamespace(
 			id: DurableObjectId,
 			options?: DurableObjectNamespaceGetDurableObjectOptions
 		): DurableObjectStub {
-			const proxyId = id as ProxyDurableObjectId;
-			return createProxyStub(
-				service,
-				namespaceName,
-				proxyId.name,
-				options?.locationHint
-			);
+			if (!(id instanceof ProxyDurableObjectId)) {
+				throw new Error(
+					"DO proxy: get() received a non-proxy DurableObjectId. Use idFromName() from this namespace."
+				);
+			}
+			return createProxyStub(service, namespaceName, id.name, options?.locationHint);
 		},
 
 		// Jurisdiction is not commonly used, but provide a basic implementation
-		jurisdiction(_jurisdiction: DurableObjectJurisdiction): DurableObjectNamespace {
+		jurisdiction(): DurableObjectNamespace {
 			return this;
 		},
 
-		newUniqueId(_options?: DurableObjectNamespaceNewUniqueIdOptions): DurableObjectId {
+		newUniqueId(): DurableObjectId {
 			throw new Error("newUniqueId is not supported via DO proxy. Use idFromName instead.");
 		},
 	} as DurableObjectNamespace;
@@ -136,18 +144,9 @@ export function injectDOProxyBindings(env: CloudflareEnv): void {
 
 	if (!doWorkerService) return;
 
-	const bindings: Array<{
-		key: keyof CloudflareEnv;
-		name: string;
-	}> = [
-		{ key: "NEXT_TAG_CACHE_DO_SHARDED", name: "NEXT_TAG_CACHE_DO_SHARDED" },
-		{ key: "NEXT_CACHE_DO_QUEUE", name: "NEXT_CACHE_DO_QUEUE" },
-		{ key: "NEXT_CACHE_DO_PURGE", name: "NEXT_CACHE_DO_PURGE" },
-	];
-
-	for (const { key, name } of bindings) {
-		if (!env[key]) {
-			(env as Record<string, unknown>)[key] = createProxyDurableObjectNamespace(
+	for (const name of NAMESPACE_BINDINGS) {
+		if (!env[name as keyof CloudflareEnv]) {
+			(env as Record<string, unknown>)[name] = createProxyDurableObjectNamespace(
 				doWorkerService,
 				name
 			);

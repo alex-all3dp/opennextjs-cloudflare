@@ -12,17 +12,7 @@
  * ```
  */
 
-const DO_RPC_PREFIX = "/do-rpc";
-
-/**
- * Map of binding names to the DurableObjectNamespace keys in CloudflareEnv.
- * The proxy handler uses these to look up the correct namespace.
- */
-const NAMESPACE_BINDINGS = [
-	"NEXT_TAG_CACHE_DO_SHARDED",
-	"NEXT_CACHE_DO_QUEUE",
-	"NEXT_CACHE_DO_PURGE",
-] as const;
+import { DO_RPC_PREFIX, NAMESPACE_BINDINGS } from "./constants.js";
 
 /**
  * Creates a fetch handler that routes DO proxy RPC requests to local DO stubs.
@@ -69,7 +59,7 @@ export function createDOProxyHandler(): ExportedHandler<CloudflareEnv> {
 			const method = pathParts[2]!;
 
 			// Validate namespace
-			if (!NAMESPACE_BINDINGS.includes(namespaceName as (typeof NAMESPACE_BINDINGS)[number])) {
+			if (!(NAMESPACE_BINDINGS as readonly string[]).includes(namespaceName)) {
 				return new Response(`Unknown DO namespace: ${namespaceName}`, { status: 404 });
 			}
 
@@ -87,7 +77,7 @@ export function createDOProxyHandler(): ExportedHandler<CloudflareEnv> {
 
 			try {
 				// Create the DO stub
-				const id = namespace.idFromName(doIdName!);
+				const id = namespace.idFromName(doIdName);
 				const locationHint = request.headers.get("X-DO-Location-Hint");
 				const stub = locationHint
 					? namespace.get(id, { locationHint } as DurableObjectNamespaceGetDurableObjectOptions)
@@ -97,9 +87,12 @@ export function createDOProxyHandler(): ExportedHandler<CloudflareEnv> {
 				const args = (await request.json()) as unknown[];
 
 				// Call the method on the stub
-				const result = await (stub as unknown as Record<string, (...a: unknown[]) => unknown>)[
-					method!
-				]!(...args);
+				// biome-ignore lint: dynamic dispatch is intentional for RPC proxy
+				const fn = (stub as unknown as Record<string, (...a: unknown[]) => unknown>)[method];
+				if (typeof fn !== "function") {
+					return new Response(`Method ${method} not found on DO stub`, { status: 404 });
+				}
+				const result = await fn(...args);
 
 				// Return the result
 				if (result === undefined || result === null) {
